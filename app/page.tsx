@@ -1,90 +1,134 @@
-"use client"
+"use client";
 import React, { useState, useRef, useEffect } from "react";
- 
 
 const App: React.FC = () => {
   const [voice, setVoice] = useState("ash");
   const [status, setStatus] = useState("");
   const [isSessionActive, setIsSessionActive] = useState(false);
+  const [userData, setUserData] = useState<any>(null); // Almacena datos del paciente
   const audioIndicatorRef = useRef<HTMLDivElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
+  const socketRef = useRef<WebSocket | null>(null); // Referencia al WebSocket
 
+  // ✅ Cerrar sesión al desmontar el componente
   useEffect(() => {
     return () => stopSession();
   }, []);
 
-   
+  // ✅ Conectar WebSocket con reconexión automática
+  useEffect(() => {
+    const connectWebSocket = () => {
+      const socket = new WebSocket("ws://localhost:3000");
 
-  const getEphemeralToken = async () => {
-    const response = await fetch('/api/session', {
-      method: 'POST',
-      headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-    const data = await response.json();
-    return data.client_secret.value;
-  };
+      socket.onopen = () => {
+        console.log("✅ Conexión WebSocket establecida.");
+        socket.send(JSON.stringify({ event: "start" }));
+      };
 
-  const setupAudioVisualization = (stream: MediaStream) => {
-    const audioContext = new AudioContext();
-    const source = audioContext.createMediaStreamSource(stream);
-    const analyzer = audioContext.createAnalyser();
-    analyzer.fftSize = 256;
+      socket.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        if (message.event === "userData") {
+          console.log("✅ Datos del paciente recibidos:", message.data);
+          setUserData(message.data);
+        }
+      };
 
-    source.connect(analyzer);
+      socket.onerror = (error) => {
+        console.error("❌ Error en WebSocket:", error);
+      };
 
-    const bufferLength = analyzer.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
+      socket.onclose = (event) => {
+        console.warn(
+          `❌ Conexión WebSocket cerrada. Código: ${event.code}, Razón: ${event.reason}`
+        );
+        setTimeout(connectWebSocket, 1000); // Reconexión automática
+      };
 
-    const updateIndicator = () => {
-      if (!audioContext) return;
-
-      analyzer.getByteFrequencyData(dataArray);
-      const average = dataArray.reduce((a, b) => a + b) / bufferLength;
-
-      if (audioIndicatorRef.current) {
-        audioIndicatorRef.current.classList.toggle("active", average > 30);
-      }
-
-      requestAnimationFrame(updateIndicator);
+      socketRef.current = socket;
     };
 
-    updateIndicator();
-    audioContextRef.current = audioContext;
+    connectWebSocket();
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+    };
+  }, []);
+
+  // ✅ Obtener Token Ephemeral
+  const getEphemeralToken = async () => {
+    try {
+      if (!userData) {
+        throw new Error("No hay datos del usuario disponibles para la sesión.");
+      }
+
+      setStatus("Obteniendo token...");
+      const response = await fetch("/api/session", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          primerNombre: userData?.primerNombre || "Desconocido",
+          profesionUOficio: userData?.profesionUOficio || "Desconocido",
+          encuestaSalud: userData?.encuestaSalud || "Desconocido",
+          antecedentesFamiliares: userData?.antecedentesFamiliares || "Sin información",
+        }),
+      });
+
+      const data = await response.json();
+      if (!data.client_secret?.value) {
+        throw new Error("No se recibió un token válido");
+      }
+      setStatus("Token obtenido correctamente");
+      return data.client_secret.value;
+    } catch (error) {
+      console.error("❌ Error al obtener el token:", error);
+      setStatus("Error al obtener el token");
+      return null;
+    }
   };
 
+  // ✅ Iniciar Sesión
   const startSession = async () => {
     try {
-      setStatus("Requesting microphone access...");
+      if (!userData) {
+        throw new Error("No hay datos del usuario disponibles.");
+      }
 
+      setStatus("Solicitando acceso al micrófono...");
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioStreamRef.current = stream;
-      setupAudioVisualization(stream);
 
-      setStatus("Fetching ephemeral token...");
+      setStatus("Obteniendo token...");
       const ephemeralToken = await getEphemeralToken();
+      if (!ephemeralToken) {
+        throw new Error("Token no disponible");
+      }
 
-      setStatus("Establishing connection...");
-      // Create a peer connection
-      const pc = new RTCPeerConnection();
-     
-      // Set up to play remote audio from the model
+      setStatus("Estableciendo conexión...");
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      });
+
       const audioEl = document.createElement("audio");
       audioEl.autoplay = true;
 
       pc.ontrack = (e) => (audioEl.srcObject = e.streams[0]);
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
 
-      pc.addTrack(stream.getTracks()[0]);
-     
-      // Start the session using the Session Description Protocol (SDP)
-      const offer = await pc.createOffer();
+      // Crear una oferta SDP con opciones explícitas
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,
+      });
       await pc.setLocalDescription(offer);
 
       const baseUrl = "https://api.openai.com/v1/realtime";
       const model = "gpt-4o-realtime-preview-2024-12-17";
+
       const response = await fetch(`${baseUrl}?model=${model}&voice=${voice}`, {
         method: "POST",
         body: offer.sdp,
@@ -94,30 +138,30 @@ const App: React.FC = () => {
         },
       });
 
+      const answer = await response.text();
+
       await pc.setRemoteDescription({
         type: "answer",
-        sdp: await response.text(),
+        sdp: answer,
       });
 
       peerConnectionRef.current = pc;
       setIsSessionActive(true);
-      setStatus("Session established successfully!");
+      setStatus("Sesión establecida correctamente");
     } catch (err) {
-      console.error(err);
-      setStatus(`Error: ${err.message}`);
+      console.error("❌ Error al iniciar la sesión:", err);
+      setStatus(
+        `Error: ${err instanceof Error ? err.message : "Error desconocido"}`
+      );
       stopSession();
     }
   };
 
+  // ✅ Detener Sesión
   const stopSession = () => {
     if (peerConnectionRef.current) {
       peerConnectionRef.current.close();
       peerConnectionRef.current = null;
-    }
-
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
     }
 
     if (audioStreamRef.current) {
@@ -125,65 +169,20 @@ const App: React.FC = () => {
       audioStreamRef.current = null;
     }
 
-    if (audioIndicatorRef.current) {
-      audioIndicatorRef.current.classList.remove("active");
-    }
-
     setIsSessionActive(false);
-    setStatus("");
-  };
-
-  const handleStartStopClick = () => {
-    if (isSessionActive) {
-      stopSession();
-    } else {
-      startSession();
-    }
+    setStatus("Sesión detenida");
   };
 
   return (
-    <div className="container mx-auto max-w-2xl">
-      <h1 className="text-3xl m-6 font-bold flex items-center">
-        <span
-          id="audioIndicator"
-          className="audio-indicator bg-gray-400 mr-2"
-          ref={audioIndicatorRef}
-        ></span>
-        OpenAI WebRTC Audio 
-      </h1>
-
-      <div className="controls">
-        <div className="form-group">
-          <label htmlFor="voiceSelect">Voice</label>
-          <select
-            id="voiceSelect"
-            className="border rounded p-2 w-full"
-            value={voice}
-            onChange={(e) => setVoice(e.target.value)}
-          >
-            <option value="ash">Ash</option>
-            <option value="ballad">Ballad</option>
-            <option value="coral">Coral</option>
-            <option value="sage">Sage</option>
-            <option value="verse">Verse</option>
-          </select>
-        </div>
-        <button
-          className={`px-4 mt-6 py-2 rounded text-white ${isSessionActive ? "bg-red-500" : "bg-blue-500"}`}
-          onClick={handleStartStopClick}
-        >
-          {isSessionActive ? "Stop Session" : "Start Session"}
-        </button>
-      </div>
-
-      {status && (
-        <div
-          className={`status mt-4 p-3 rounded ${status.startsWith("Error") ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-            }`}
-        >
-          {status}
-        </div>
-      )}
+    <div>
+      <button
+        onClick={isSessionActive ? stopSession : startSession}
+        className={`px-6 py-3 text-white font-bold ${
+          isSessionActive ? "bg-red-500" : "bg-blue-500"
+        }`}
+      >
+        {isSessionActive ? "Stop Chat" : "Start Chat"}
+      </button>
     </div>
   );
 };
