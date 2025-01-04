@@ -6,21 +6,30 @@ const App: React.FC = () => {
   const [status, setStatus] = useState("");
   const [isSessionActive, setIsSessionActive] = useState(false);
   const [userData, setUserData] = useState<any>(null); // Almacena datos del paciente
+  const [refId, setRefId] = useState<string | null>(null); // ✅ Estado para capturar 'ref'
   const audioIndicatorRef = useRef<HTMLDivElement | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const socketRef = useRef<WebSocket | null>(null); // Referencia al WebSocket
 
-  // ✅ Cerrar sesión al desmontar el componente
+  // ✅ Capturar el parámetro 'ref' de la URL
   useEffect(() => {
-    return () => stopSession();
+    const params = new URLSearchParams(window.location.search);
+    const refParam = params.get("ref");
+    console.log("🔑 Parámetro 'ref' capturado en el frontend:", refParam);
+    setRefId(refParam);
   }, []);
 
   // ✅ Conectar WebSocket con reconexión automática
   useEffect(() => {
     const connectWebSocket = () => {
-      const socket = new WebSocket("ws://localhost:3000");
+      if (!refId) {
+        console.warn("⚠️ Parámetro 'ref' no está disponible. No se iniciará el WebSocket.");
+        return;
+      }
+
+      const socket = new WebSocket(`ws://localhost:3000/?ref=${refId}`);
 
       socket.onopen = () => {
         console.log("✅ Conexión WebSocket establecida.");
@@ -49,14 +58,10 @@ const App: React.FC = () => {
       socketRef.current = socket;
     };
 
-    connectWebSocket();
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
-    };
-  }, []);
+    if (refId) {
+      connectWebSocket();
+    }
+  }, [refId]);
 
   // ✅ Obtener Token Ephemeral
   const getEphemeralToken = async () => {
@@ -175,6 +180,11 @@ const App: React.FC = () => {
 
   return (
     <div>
+      <p>
+        {refId
+          ? `✅ Parámetro ref capturado: ${refId}`
+          : "⚠️ Parámetro ref no encontrado en la URL"}
+      </p>
       <button
         onClick={isSessionActive ? stopSession : startSession}
         className={`px-6 py-3 text-white font-bold ${
@@ -183,6 +193,7 @@ const App: React.FC = () => {
       >
         {isSessionActive ? "Stop Chat" : "Start Chat"}
       </button>
+      <p>{status}</p>
     </div>
   );
 };

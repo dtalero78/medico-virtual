@@ -3,6 +3,7 @@ const next = require('next');
 const { WebSocketServer } = require('ws');
 const { Pool } = require('pg');
 require('dotenv').config({ path: require('path').resolve(__dirname, '../.env') });
+
 console.log('🔑 OPENAI_API_KEY:', process.env.OPENAI_API_KEY);
 
 const dev = process.env.NODE_ENV !== 'production';
@@ -41,6 +42,25 @@ const pool = new Pool({
   }
 })();
 
+// ✅ Función para obtener parámetros de la URL
+/**
+ * Extrae el valor de un parámetro específico de una URL.
+ * @param {string} url - La URL de la cual extraer el parámetro.
+ * @param {string} param - El nombre del parámetro que queremos obtener.
+ * @returns {string|null} - El valor del parámetro o null si no existe.
+ */
+function getParamFromUrl(url, param) {
+  try {
+    const parsedUrl = new URL(url, 'http://localhost');
+    const value = parsedUrl.searchParams.get(param);
+    console.log(`🔑 Parámetro '${param}' obtenido: ${value}`);
+    return value;
+  } catch (error) {
+    console.warn('⚠️ Error al analizar la URL:', error.message);
+    return null;
+  }
+}
+
 // 🛠️ Inicializar el servidor
 app.prepare().then(() => {
   const server = createServer((req, res) => {
@@ -50,10 +70,14 @@ app.prepare().then(() => {
   // ✅ Inicializar WebSocket Server
   const wss = new WebSocketServer({ server });
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', (ws, req) => {
     console.log('🔄 Conexión WebSocket establecida con el cliente.');
 
     let openAIConnection = null;
+
+    // ✅ Capturar el parámetro `ref` usando la función
+    const userId = getParamFromUrl(req.url, 'ref') || 'd4ecfa34-dd35-47a0-9e33-525443218d6f';
+    console.log(`🔑 userId final: ${userId}`);
 
     // ✅ Buscar datos en la base de datos
     const fetchUserData = async (id) => {
@@ -119,61 +143,19 @@ app.prepare().then(() => {
 
         openAIConnection.send(JSON.stringify(sessionUpdate));
       });
-
-      openAIConnection.on('message', (data) => {
-        try {
-          const response = JSON.parse(data.toString());
-          if (response.type === 'response.audio.delta') {
-            ws.send(JSON.stringify({
-              event: 'media',
-              media: {
-                payload: response.audio,
-              },
-            }));
-          }
-        } catch (error) {
-          console.error('❌ Error al procesar el mensaje de OpenAI:', error.message);
-        }
-      });
-
-      openAIConnection.on('error', (error) => {
-        console.error('❌ Error en WebSocket OpenAI:', error.message);
-      });
-
-      openAIConnection.on('close', () => {
-        console.warn('❌ Conexión WebSocket con OpenAI cerrada.');
-      });
     };
 
-    // ✅ Manejar mensajes del cliente WebSocket
-    ws.on('message', async (data) => {
-      try {
-        const message = JSON.parse(data.toString());
-
-        if (message.event === 'start') {
-          const userId = message.userId || 'd4ecfa34-dd35-47a0-9e33-525443218d6f';
-          const userData = await fetchUserData(userId);
-
-          if (userData) {
-            ws.send(JSON.stringify({
-              event: 'userData',
-              data: userData,
-            }));
-            if (!openAIConnection) {
-              connectToOpenAI(userData);
-            }
-          }
-        }
-
-        if (message.event === 'media' && openAIConnection) {
-          openAIConnection.send(JSON.stringify({
-            audio: message.media.payload,
-          }));
-        }
-      } catch (error) {
-        console.error('❌ Error al manejar el mensaje WebSocket:', error.message);
+    // ✅ Iniciar conexión con datos del usuario
+    (async () => {
+      const userData = await fetchUserData(userId);
+      if (userData) {
+        ws.send(JSON.stringify({
+          event: 'userData',
+          data: userData,
+        }));
+        connectToOpenAI(userData);
       }
-    });
+    })();
 
     ws.on('close', (code, reason) => {
       console.warn(`❌ Conexión WebSocket con el cliente cerrada. Código: ${code}, Razón: ${reason}`);

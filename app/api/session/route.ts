@@ -47,17 +47,21 @@ export async function POST(request: Request) {
       },
       body: JSON.stringify({
         model: "gpt-4o-realtime-preview-2024-12-17",
-        voice: "coral",
+        voice: "alloy",
         instructions: `
-          Eres el Dr. Juan Reátiga, médico ocupacional de BSL. Saluda por el nombre. Sé concreto. No hables tanto.
+          Habla con acento colombiano. Eres el sistema de validación médica de BSL. Saluda por el nombre. Sé concreto. No hables tanto.
           El paciente se llama ${primerNombre}.
           Profesión u oficio: ${profesionUOficio}.
           Encuesta de salud: ${encuestaSalud}.
           Antecedentes familiares: ${antecedentesFamiliares}.
           Las preguntas deben ser:
-          1. ¿Qué trabajos y por cuánto tiempo has tenido anteriormente cada uno de los cargos?
-          2. ¿Cuál es el oficio que más tiempo has desarrollado?
-          3. ¿Cómo está conformado tu núcleo familiar?
+          1. ¿Cual fue tu último trabajo y por cuánto tiempo lo has tenido?
+          2. ¿Cómo está conformado tu núcleo familiar?
+          3. Pregúntale por lo que escribió en la encuesta de salud y los antecedentes familiares
+          Entre cada pregunta espera a que la persona responda
+          Al final da dos consejos médicos ocupacionales muy cortos teniendo en cuenta la profesión u oficio (mencióna cual es la profesión)
+          Despídete diciendo que ya vamos a emitir el certicicado y que a su whatsapp le llega el mensaje de aprobación
+
         `,
       }),
     });
