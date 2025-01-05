@@ -43,12 +43,6 @@ const pool = new Pool({
 })();
 
 // ✅ Función para obtener parámetros de la URL
-/**
- * Extrae el valor de un parámetro específico de una URL.
- * @param {string} url - La URL de la cual extraer el parámetro.
- * @param {string} param - El nombre del parámetro que queremos obtener.
- * @returns {string|null} - El valor del parámetro o null si no existe.
- */
 function getParamFromUrl(url, param) {
   try {
     const parsedUrl = new URL(url, 'http://localhost');
@@ -143,6 +137,28 @@ app.prepare().then(() => {
 
         openAIConnection.send(JSON.stringify(sessionUpdate));
       });
+
+      openAIConnection.on('message', (message) => {
+        const data = JSON.parse(message);
+        if (data.event === 'conversation_end') {
+          console.log('🏁 OpenAI ha finalizado la conversación.');
+          ws.send(JSON.stringify({ event: 'endConversation' }));
+        }
+      });
+
+      openAIConnection.on('close', (code, reason) => {
+        console.warn(`🏁 OpenAI cerró la conexión. Código: ${code}, Razón: ${reason || 'Sin razón'}`);
+        if (code !== 1000) { // 1000 indica cierre limpio
+          console.warn('⚠️ Cierre inesperado de OpenAI, notificando al cliente...');
+          ws.send(JSON.stringify({ event: 'endConversation', error: 'Cierre inesperado desde OpenAI' }));
+        }
+      });
+      
+
+      openAIConnection.on('error', (error) => {
+        console.error('❌ Error en la conexión con OpenAI:', error.message);
+        ws.send(JSON.stringify({ event: 'endConversation', error: error.message }));
+      });
     };
 
     // ✅ Iniciar conexión con datos del usuario
@@ -158,14 +174,13 @@ app.prepare().then(() => {
     })();
 
     ws.on('close', (code, reason) => {
-      console.warn(`❌ Conexión WebSocket con el cliente cerrada. Código: ${code}, Razón: ${reason}`);
+      console.warn(`❌ Conexión WebSocket con el cliente cerrada. Código: ${code}, Razón: ${reason || 'Sin razón'}`);
       if (openAIConnection && openAIConnection.readyState === WebSocket.OPEN) {
         openAIConnection.close();
       }
     });
   });
 
-  // ✅ Iniciar el servidor
   const PORT = process.env.PORT || 3000;
   server.listen(PORT, (err) => {
     if (err) {

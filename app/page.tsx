@@ -29,8 +29,11 @@ const App: React.FC = () => {
         return;
       }
 
-      const socket = new WebSocket(`ws://localhost:3000/?ref=${refId}`);
-
+      const socket = new WebSocket(
+        process.env.NODE_ENV === "production"
+          ? `wss://medico-virtual.onrender.com/?ref=${refId}`
+          : `ws://localhost:3000/?ref=${refId}`
+      );
       socket.onopen = () => {
         console.log("✅ Conexión WebSocket establecida.");
         socket.send(JSON.stringify({ event: "start" }));
